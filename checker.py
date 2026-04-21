@@ -1,119 +1,117 @@
-# Import any necessary modules or packages 
 import csv
 import re
-import os
-import itertools
+from pathlib import Path
 
-# Allows for manual input of filename
-filename = raw_input("What is the filename: ")
-# Comparative file. Needs to be updated every week. 
-unreachables = 'clean_unreachables.csv'
+UNREACHABLES_FILE = "clean_unreachables.csv"
+EXTRA_EMAILS = [
+    "sean.mbogo@####.com",
+    "c####.p####@####.com",
+]
 
-# Main function. Use '#' to negate any unnecessary scripts 
+EMAIL_RE = re.compile(
+    r"^[_a-z0-9-]+(\.[_a-z0-9-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)+$",
+    re.IGNORECASE,
+)
+
+BAD_CHARS_RE = re.compile(r"[\xc2\xc3\xa3\xbe\x8e\xae\x83\xa8\xe6\xc4\xca\n]")
+
+
+def normalize_email(value):
+    if value is None:
+        return ""
+
+    email = value.strip().replace(" ", "").lower()
+    if EMAIL_RE.match(email):
+        return email
+
+    cleaned = BAD_CHARS_RE.sub("", email)
+    if EMAIL_RE.match(cleaned):
+        return cleaned
+
+    return ""
+
+
+def load_unreachables(path):
+    unreachable = set()
+
+    with open(path, "r", newline="", encoding="utf-8", errors="ignore") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row:
+                continue
+            email = row[0].strip().replace(" ", "").lower()
+            if email and email != "email":
+                unreachable.add(email)
+
+    return unreachable
+
+
+def process_file(filename, unreachables_file=UNREACHABLES_FILE):
+    source = Path(filename)
+    cleaned_output = source.with_name(f"customer_zaius_{source.name}")
+    unreachable_output = source.with_name(f"UNREACHABLES_{source.name}")
+    send_output = source.with_name(f"SENT_EMAILS_{source.name}")
+
+    unreachables = load_unreachables(unreachables_file)
+    invalid_rows = []
+    valid_emails = []
+
+    with open(source, "r", newline="", encoding="utf-8", errors="ignore") as f:
+        reader = csv.reader(f)
+
+        try:
+            next(reader)
+        except StopIteration:
+            pass
+
+        for row in reader:
+            if not row:
+                continue
+
+            raw_email = row[0]
+            email = normalize_email(raw_email)
+
+            if email:
+                valid_emails.append(email)
+            else:
+                invalid_rows.append(raw_email)
+
+    valid_emails.extend(EXTRA_EMAILS)
+
+    with open(cleaned_output, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["email"])
+
+        for email in valid_emails:
+            writer.writerow([email])
+
+        for bad in invalid_rows:
+            if "'" in bad.lower():
+                writer.writerow([bad])
+            else:
+                writer.writerow([f"FIX THIS EMAIL: {bad!r}"])
+
+    with open(unreachable_output, "w", newline="", encoding="utf-8") as f_unr, \
+         open(send_output, "w", newline="", encoding="utf-8") as f_send:
+        unr_writer = csv.writer(f_unr)
+        send_writer = csv.writer(f_send)
+
+        for email in valid_emails:
+            if email in unreachables:
+                unr_writer.writerow([email])
+            else:
+                send_writer.writerow([email])
+
+    print("Processing complete!")
+    print(f"Valid/cleaned output: {cleaned_output}")
+    print(f"Unreachables output:  {unreachable_output}")
+    print(f"Send list output:     {send_output}")
+
+
 def main():
-	email_trimmer(filename)
-	email_checker(filename)
-	email_unreachable(filename, unreachables)
-	email_send(filename, unreachables)
-
-# Pre-processes the data to remove any empty spaces that may trigger  
-# the email checker below 
-def email_trimmer(filename):
-	with open(filename, 'rU') as csvfile, open(('trim_%s' % filename), 'wb') as output:
-		writer = csv.writer(output, delimiter=',')
-		readCSV = csv.reader(csvfile, delimiter = ',')
-		
-		writer.writerow(["email"])
-		next(readCSV)
-		
-		for row in readCSV:
-			address = row
-
-			if address == []:
-				next(readCSV)			
-			
-			else:
-				address = row[0]
-				address.strip()
-				address = re.sub(' ', '',address)
-				writer.writerow([address])
-	print "Trimmer - Successfully completed!"	
-
-# Scans each email to ensure that it has an arabesque(@), a period(.)
-# and text before and after the arabesque and before and the after 
-# the period. It corrects some pre-determined errors and automatically adds
-# two necessary emails  
-def email_checker(filename):
-	results = []
-
-	with open(('trim_%s' % filename), 'rU') as csvfile, open(('customer_zaius_%s' % filename), 'wb') as output:
-		readCSV = csv.reader(csvfile, delimiter = ',')
-		writer = csv.writer(output, delimiter=',')
-		writer.writerow(["email"])
-		next(readCSV)
-
-		for row in readCSV:
-			address = row
-
-			if address == []:
-				next(readCSV)
-
-			else:
-				match = re.match('^[_a-z0-9-]+(\.[_a-z0-9-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z0-9-]+)*(\.[a-z0-9-]+)*(\.[a-z0-9-]+)$', address[0].lower())
-				if match != None:
-					writer.writerow(address)
-
-				else:
-					sub = re.sub('[\xc2\xc3\xa3\xbe\x8e\xae\x83\xa8\xe6\xc4\xca\n]','', address[0].lower())
-					match = re.match('^[_a-z0-9-]+(\.[_a-z0-9-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z0-9-]+)*(\.[a-z0-9-]+)$', sub)
-
-					if match != None:
-						writer.writerow([sub])
-					else:
-						results.append(address)
-
-		for test in results:
-			match = re.search(r"'", test[0].lower())
-			if match != None:
-				writer.writerow(test)
-			else:
-				writer.writerow(["FIX THIS EMAIL: %r " % test])
-
-		writer.writerow(["sean.mbogo@####.com"])
-		writer.writerow(["c####.p####@####.com"])
-		os.remove('trim_%s' % filename)
-
-		print "Checker - Successfully completed!"
-
-# This script simply checks whether the emails in the first file are present 
-# in the Unreachables section 
-def email_unreachable(filename, unreachables):
-	with open(filename, 'rU') as email_list, open(unreachables, 'rU') as unreachables_list, \
-	open(('UNREACHABLES_%s') % filename, 'w+') as output: 
-		writer = csv.writer(output, delimiter=',')
-		readCSV1 = email_list.readlines()
-		readCSV2 = unreachables_list.readlines()
-
-		for line in readCSV1:
-			if line in readCSV2:
-				writer.writerow([line])
-	print "Unreachables - Successfully completed!"
-
-# This script simply checks whether the emails in the first file are NOT present 
-# in the Unreachables section 
-def email_send(filename, unreachables):
-	with open("customer_zaius_%s" % filename, 'rU') as email_list, open(unreachables, 'rU') as unreachables_list, \
-	open(('SENT_EMAILS_%s') % filename, 'w+') as output: 
-		writer = csv.writer(output, delimiter=',')
-		readCSV1 = email_list.readlines()
-		readCSV2 = unreachables_list.readlines()
-
-		for line in readCSV1:
-			if line not in readCSV2:
-				writer.writerow([line])
-	print "Sent - Successfully completed!"
-main()
+    filename = input("What is the filename: ").strip()
+    process_file(filename)
 
 
-
-	
+if __name__ == "__main__":
+    main()
